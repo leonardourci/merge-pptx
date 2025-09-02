@@ -1,6 +1,6 @@
 import Automizer from 'pptx-automizer';
 import PptxGenJS from 'pptxgenjs';
-import { modify } from 'pptx-automizer/dist';
+import { ISlide, modify, XmlElement } from 'pptx-automizer/dist';
 
 ( async () => {
     const automizer = new Automizer ( {
@@ -11,7 +11,9 @@ import { modify } from 'pptx-automizer/dist';
         removeExistingSlides: true,
 
         // Safer when mixing different templates
-        autoImportSlideMasters: true
+        autoImportSlideMasters: true,
+
+        verbosity: 2
     } );
 
     const pptxgenjs = new PptxGenJS ();
@@ -35,7 +37,7 @@ import { modify } from 'pptx-automizer/dist';
         }
     );
 
-    const pptx = await pptxgenjs.write ( { outputType: 'nodebuffer' } ) as Buffer;
+    const pptx = await pptxgenjs.write ( { outputType: 'arraybuffer' } ) as Buffer;
 
     const performancePptxLabel = 'performance';
     const rootPptxLabel = 'root';
@@ -47,23 +49,50 @@ import { modify } from 'pptx-automizer/dist';
         .load ( ROOT_FILE, rootPptxLabel )
         .load ( pptx, performancePptxLabel );
 
-    // @TODO: modify the <DATE_PLACEHOLDER> in the root presentation slid
+    // We don't need this prefix, using it bc the input I'm using has it as well, but we could simply have the "<DATE_PLACEHOLDER>"
+    // directly in the sub header place which will ease this update for translations
+    const subHeaderPrefix = '(the "Access Fund") |';
+    const PLACEHOLDER = `${subHeaderPrefix} <DATE_PLACEHOLDER>`;
+
+    const addRootReplacingByXml = ( n: number ) =>
+        // pptx-automizer supports xmldom as callback
+        pres.addSlide ( rootPptxLabel, n, async ( sl ) => {
+            const ids = await sl.getAllTextElementIds ();
+            for ( const id of ids ) {
+                sl.modifyElement ( id, ( el: XmlElement ) => {
+                    const texts = el.getElementsByTagName ( 'a:t' );
+                    for ( let i = 0; i < texts.length; i++ ) {
+                        const t = texts.item ( i );
+                        if ( t?.textContent && t.textContent === PLACEHOLDER ) {
+                            const currDate = new Date ();
+                            const monthName = currDate.toLocaleString (
+                                'en-US',
+                                { month: 'long' }
+                            );
+                            const year = currDate.getFullYear ();
+
+                            t.textContent = `${subHeaderPrefix} ${monthName} ${year}`;
+                        }
+                    }
+                } );
+            }
+        } );
 
     // PS: The below could be done in a loop as well, doing it manually for clarity
 
     // Add first slide of the root presentation
-    pres.addSlide ( rootPptxLabel, 1 );
+    addRootReplacingByXml ( 1 );
 
     // Add the second slide of the root presentation
-    pres.addSlide ( rootPptxLabel, 2 );
+    addRootReplacingByXml ( 2 );
 
     // Add the single generated performance slide in the middle of the root presentation
     pres.addSlide ( performancePptxLabel, 1 );
 
     // Add the remaining slides of the root presentation
-    pres.addSlide ( rootPptxLabel, 3 );
-    pres.addSlide ( rootPptxLabel, 4 );
-    pres.addSlide ( rootPptxLabel, 5 );
+    addRootReplacingByXml ( 3 );
+    addRootReplacingByXml ( 4 );
+    addRootReplacingByXml ( 5 );
 
     await pres.write ( 'merged-final.pptx' );
 } ) ();
